@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+        }
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 150vw;
+            height: auto;
+            object-fit: contain;
+        }
+        #output_canvas {
+            border: 2px solid #ddd;
+            border-radius: 80px;
+        }
+        #warning {
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            color: red;
+        }
+        #cross {
+            margin-top: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: rgb(60, 0, 255);
+        }
+        #left_warning, #right_warning {
+            margin-top: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            color: red;
+        }
+        #resetBtn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #resetBtn:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Workout Monitor</h1>
+    <video id="video" autoplay playsinline style="display: none;"></video>
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+    <div id="warning"></div>
+    <div id="left_warning"></div>
+    <div id="right_warning"></div>
+    <div id="left_cross"></div>
+    <div id="right_cross"></div>
+    <!-- Restart Button -->
+    <button id="resetBtn">Restart</button>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const warningDiv = document.getElementById('warning');
+        const leftWarningDiv = document.getElementById('left_warning');
+        const rightWarningDiv = document.getElementById('right_warning');
+        const leftCrossDiv = document.getElementById('left_cross');
+        const rightCrossDiv = document.getElementById('right_cross');
+        const resetBtn = document.getElementById('resetBtn');
+
+
+        const STRAIGHT_TOLERANCE = 0.02;
+        const GROUND_TOLERANCE = 0.05;
+        const BRIGHTNESS_THRESHOLD = 50;
+        const Z_THRESHOLD = 0.4;
+        let counter = 0;
+
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+        });
+
+        pose.setOptions({
+            modelComplexity: 0,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+        });
+
+        const vector = (p1, p2) => [p2.x - p1.x, p2.y - p1.y, p2.z - p1.z];
+
+        const crossProductMagnitude = (v1, v2) => Math.sqrt(
+            (v1[1] * v2[2] - v1[2] * v2[1]) ** 2 +
+            (v1[2] * v2[0] - v1[0] * v2[2]) ** 2 +
+            (v1[0] * v2[1] - v1[1] * v2[0]) ** 2
+        );
+
+        const checkBrightness = (imageData) => {
+            let totalBrightness = 0;
+            const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+            }
+            return totalBrightness / (data.length / 4);
+        };
+
+        let lastProcessedTime = 0;
+        const processingInterval = 100; // 10 FPS
+
+
+        // Function to reset the counter and flags
+        function resetCounter() {
+            counter = 0;
+            leftHandEntered = false;
+            rightHandEntered = false;
+            leftHandInside = false;
+            rightHandInside = false;
+            leftCrossDiv.innerText = counter;
+            rightCrossDiv.innerText = "";
+            // Speak the reset action
+            speak("The count has been reset.");
+        }
+
+        // Function to speak the count
+        function speak(message) {
+            const speechSynthesis = window.speechSynthesis;
+            const utterance = new SpeechSynthesisUtterance(message);
+            speechSynthesis.speak(utterance);
+        }
+
+        // Attach event listener for restart button
+        resetBtn.addEventListener('click', resetCounter);
+
+
+
+
+
+        let leftHandEntered = false;
+        let rightHandEntered = false;
+
+
+        pose.onResults((results) => {
+            const currentTime = performance.now();
+            if (currentTime - lastProcessedTime < processingInterval) {
+                return;
+            }
+            lastProcessedTime = currentTime;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            const brightness = checkBrightness(canvasCtx.getImageData(0, 0, canvasElement.width, canvasElement.height));
+            if (brightness < BRIGHTNESS_THRESHOLD) {
+                warningDiv.innerText = "Warning: Brightness too low!";
+                canvasCtx.restore();
+                return;
+            } else {
+                warningDiv.innerText = "";
+            }
+
+            if (results.poseLandmarks) {
+                const lm = results.poseLandmarks;
+
+                ['LEFT', 'RIGHT'].forEach((currentSide) => {
+                    const side = currentSide;
+                    const shoulder = lm[side === 'LEFT' ? 11 : 12];
+                    const elbow = lm[side === 'LEFT' ? 13 : 14];
+                    const wrist = lm[side === 'LEFT' ? 15 : 16];
+
+                    if (shoulder && elbow && wrist) {
+                        const SE = vector(shoulder, elbow);
+                        const EW = vector(elbow, wrist);
+                        const crossProduct = crossProductMagnitude(SE, EW);
+
+                        const topLineY = shoulder.y * canvasElement.height - 0.1 * canvasElement.height;
+                        const bottomLineY = shoulder.y * canvasElement.height + 0.1 * canvasElement.height;
+
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(0, topLineY);
+                        canvasCtx.lineTo(canvasElement.width, topLineY);
+                        canvasCtx.stroke();
+
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(0, bottomLineY);
+                        canvasCtx.lineTo(canvasElement.width, bottomLineY);
+                        canvasCtx.stroke();
+
+                        const isWithinGuidingLines =
+                            elbow.y * canvasElement.height >= topLineY && elbow.y * canvasElement.height <= bottomLineY &&
+                            wrist.y * canvasElement.height >= topLineY && wrist.y * canvasElement.height <= bottomLineY;
+
+                        if (!isWithinGuidingLines) {
+                            if (side === 'LEFT') {
+                                leftWarningDiv.innerText = "Left hand outside guiding lines!";
+                                leftHandInside = false;
+                            } else {
+                                rightWarningDiv.innerText = "Right hand outside guiding lines!";
+                                rightHandInside = false;
+                            }
+                        } else {
+                            if (side === 'LEFT') {
+                                leftHandInside = true;
+                                leftWarningDiv.innerText = "";
+                            } else {
+                                rightHandInside = true;
+                                rightWarningDiv.innerText = "";
+                            }
+
+                            const isStraight = crossProduct < STRAIGHT_TOLERANCE;
+                            const isParallel = Math.abs(SE[1]) < GROUND_TOLERANCE && Math.abs(EW[1]) < GROUND_TOLERANCE;
+                            const tooFar = shoulder.z > Z_THRESHOLD || elbow.z > Z_THRESHOLD || wrist.z > Z_THRESHOLD;
+
+                            let message = `${side} hand: `;
+                            if (tooFar) {
+                                message += "TOO FAR";
+                            } else if (isStraight && isParallel) {
+                                message += "STRAIGHT AND PARALLEL";
+                            } else if (isStraight) {
+                                message += "STRAIGHT BUT NOT PARALLEL";
+                            } else {
+                                message += "NOT STRAIGHT";
+                            }
+                            if (side === 'LEFT') {
+                                leftWarningDiv.innerText = message;
+                            } else {
+                                rightWarningDiv.innerText = message;
+                            }
+
+                            canvasCtx.font = "16px Arial";
+                            canvasCtx.fillStyle = "green";
+                            // canvasCtx.fillText(message, shoulder.x * canvasElement.width - 50, shoulder.y * canvasElement.height - 20);
+                            
+                            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                            drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+
+                            // Check for both hands being inside guiding lines to increment counter
+                            if (leftHandInside && rightHandInside) {
+                                if (!leftHandEntered || !rightHandEntered) {
+                                    counter += 1;
+                                    leftCrossDiv.innerText = counter;
+
+                                    // Speak the updated count
+                                    speak("Count: " + counter);
+
+
+                                    leftHandEntered = true;
+                                    rightHandEntered = true;
+                                }
+                            }
+                        }
+                    }
+                });
+                // If both hands are outside, reset the entry flags
+
+                if (!leftHandInside && !rightHandInside) {
+                    leftHandEntered = false;
+                    rightHandEntered = false;
+                }
+            }
+
+            canvasCtx.restore();
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await pose.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480,
+        });
+        camera.start();
+    </script>
+</body>
+</html>
