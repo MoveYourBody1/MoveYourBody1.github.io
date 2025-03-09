@@ -1,90 +1,172 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workout Monitor</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background-color: black; /* Black background for the entire page */
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }
-        h1 {
-            color: white; /* White text for visibility */
-            margin: 10px 0;
-        }
-        #video {
-            display: none; /* Hide the video element */
-        }
-        #output_canvas {
-            background-color: black; /* Black background for canvas */
-            width: 100vw;
-            height: 100vh;
-            max-width: 100%;
-            max-height: 100%;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Posture Frame Guide</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: black;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    h1 {
+      color: white;
+      margin: 10px 0;
+    }
+    #video {
+      display: none;
+    }
+    #output_canvas {
+      background-color: black;
+      width: 100vw;
+      height: 100vh;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    #loading-text {
+      color: white;
+      font-size: 24px;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: block;
+    }
+  </style>
 </head>
 <body>
-    <h1>Workout Monitor</h1>
-    <video id="video" autoplay playsinline></video>
-    <canvas id="output_canvas" width="640" height="480"></canvas>
+  <h1>Posture Frame Guide</h1>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="output_canvas" width="640" height="480"></canvas>
+  <div id="loading-text">Loading...</div>
 
-    <script>
-        const videoElement = document.getElementById('video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
+  <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const loadingText = document.getElementById('loading-text');
 
-        const pose = new Pose({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
-        });
+    // Smoothing parameters for landmarks
+    let smoothedLandmarks = null;
+    const smoothingFactor = 0.7; // Increased smoothing
 
-        pose.setOptions({
-            modelComplexity: 1, // Increased model complexity for better accuracy
-            smoothLandmarks: true,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.7,
-        });
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+    });
 
-        pose.onResults((results) => {
-            // Clear the canvas with a black background
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.fillStyle = 'black';
-            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
+    });
 
-            if (results.poseLandmarks) {
-                // Draw connections between landmarks
-                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {
-                    color: '#00FF00', // Green lines for connections
-                    lineWidth: 4,
-                });
+    function drawLimbGuidelines(landmarks) {
+      const colors = ['#FFD700', '#FFD700', '#FFD700'];
+      let colorIndex = 0;
 
-                // Draw landmarks (points)
-                drawLandmarks(canvasCtx, results.poseLandmarks, {
-                    color: '#FF0000', // Red color for landmarks
-                    lineWidth: 2,
-                    radius: 4, // Size of the landmark points
-                });
-            }
-        });
+      function drawThickLine(x1, y1, x2, y2, color, lineWidth) {
+        canvasCtx.strokeStyle = color;
+        canvasCtx.lineWidth = lineWidth;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(x1, y1);
+        canvasCtx.lineTo(x2, y2);
+        canvasCtx.stroke();
+      }
 
-        const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await pose.send({ image: videoElement });
-            },
-            width: 640,
-            height: 480,
-        });
-        camera.start();
-    </script>
+      [11, 12].forEach((shoulderIndex) => {
+        const wrist = landmarks[shoulderIndex + 4];
+        const color = colors[colorIndex++ % colors.length];
+        drawThickLine(
+          landmarks[shoulderIndex].x * canvasElement.width,
+          landmarks[shoulderIndex].y * canvasElement.height,
+          wrist.x * canvasElement.width,
+          wrist.y * canvasElement.height,
+          color,
+          10
+        );
+      });
+
+      [23, 24].forEach((hipIndex) => {
+        const ankle = landmarks[hipIndex + 4];
+        const color = colors[colorIndex++ % colors.length];
+        drawThickLine(
+          landmarks[hipIndex].x * canvasElement.width,
+          landmarks[hipIndex].y * canvasElement.height,
+          ankle.x * canvasElement.width,
+          ankle.y * canvasElement.height,
+          color,
+          10
+        );
+      });
+
+      [11, 12].forEach((shoulderIndex) => {
+        const hip = landmarks[shoulderIndex + 12];
+        const color = colors[colorIndex++ % colors.length];
+        drawThickLine(
+          landmarks[shoulderIndex].x * canvasElement.width,
+          landmarks[shoulderIndex].y * canvasElement.height,
+          hip.x * canvasElement.width,
+          hip.y * canvasElement.height,
+          color,
+          8
+        );
+      });
+    }
+
+    pose.onResults((results) => {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.fillStyle = 'black';
+      canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+      canvasCtx.save();
+      canvasCtx.scale(-1, 1);
+      canvasCtx.translate(-canvasElement.width, 0);
+
+      if (results.poseLandmarks) {
+        // Smooth the landmark positions
+        if (!smoothedLandmarks) {
+          smoothedLandmarks = results.poseLandmarks.map(l => ({ x: l.x, y: l.y, z: l.z, visibility: l.visibility }));
+        } else {
+          results.poseLandmarks.forEach((landmark, i) => {
+            smoothedLandmarks[i].x = smoothingFactor * smoothedLandmarks[i].x + (1 - smoothingFactor) * landmark.x;
+            smoothedLandmarks[i].y = smoothingFactor * smoothedLandmarks[i].y + (1 - smoothingFactor) * landmark.y;
+            smoothedLandmarks[i].z = smoothingFactor * smoothedLandmarks[i].z + (1 - smoothingFactor) * landmark.z;
+            smoothedLandmarks[i].visibility = smoothingFactor * smoothedLandmarks[i].visibility + (1 - smoothingFactor) * landmark.visibility;
+          });
+        }
+      }
+
+      if (smoothedLandmarks) {
+        drawLimbGuidelines(smoothedLandmarks);
+
+        drawConnectors(canvasCtx, smoothedLandmarks, POSE_CONNECTIONS,
+          { color: '#00FF0077', lineWidth: 4 });
+        drawLandmarks(canvasCtx, smoothedLandmarks,
+          { color: '#FF0000AA', lineWidth: 2, radius: 4 });
+         loadingText.style.display = 'none';
+      }
+
+      canvasCtx.restore();
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480,
+    });
+    camera.start();
+  </script>
 </body>
 </html>
